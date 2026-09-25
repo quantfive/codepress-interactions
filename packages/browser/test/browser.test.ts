@@ -291,29 +291,149 @@ it("leaves signed requests and existing correlation headers intact", async () =>
   expect(JSON.stringify(batches())).not.toContain("private");
 });
 
-it("bounds progress traversal for a large added subtree", async () => {
-  const traversals: ReturnType<typeof vi.fn>[] = [];
-  const createWalker = document.createTreeWalker.bind(document);
-  vi.spyOn(document, "createTreeWalker").mockImplementation((...args) => {
-    const walker = createWalker(...args);
-    const next = walker.nextNode.bind(walker);
-    const counted = vi.fn(next);
-    walker.nextNode = counted;
-    traversals.push(counted);
-    return walker;
+describe("mutation callback work budget", () => {
+  it.each([
+    "one large subtree",
+    "many records and subtrees",
+    "excluded siblings",
+    "text siblings",
+  ])("shares one inspection budget across %s", async (shape) => {
+    const limit = 32;
+    const roots: Element[][] = [];
+    for (
+      let record = 0;
+      record < (shape === "many records and subtrees" ? 12 : 1);
+      record++
+    ) {
+      const group: Element[] = [];
+      for (
+        let subtree = 0;
+        subtree < (shape === "many records and subtrees" ? 12 : 1);
+        subtree++
+      ) {
+        const tree = document.createElement("section");
+        tree.innerHTML =
+          shape === "excluded siblings"
+            ? '<div data-interactions-exclude><progress data-testid="private.indicator"></progress></div>'.repeat(
+                5000,
+              ) + "<progress></progress>"
+            : "<progress></progress>".repeat(
+                shape === "many records and subtrees" ? 12 : 5000,
+              );
+        if (shape === "text siblings") {
+          tree.replaceChildren();
+          for (let index = 0; index < 5000; index++)
+            tree.append(document.createTextNode("private text"));
+          tree.append(document.createElement("progress"));
+        }
+        group.push(tree);
+      }
+      roots.push(group);
+    }
+    const NativeObserver = MutationObserver;
+    let callbackActive = false;
+    let callbacks = 0;
+    let work = 0;
+    const hasAttribute = Element.prototype.hasAttribute;
+    const firstChild = Object.getOwnPropertyDescriptor(
+      Node.prototype,
+      "firstChild",
+    )!.get!;
+    const parentNode = Object.getOwnPropertyDescriptor(
+      Node.prototype,
+      "parentNode",
+    )!.get!;
+    // Real mutation delivery, with counters only while the SDK callback runs.
+    // One record lookup and each element/document privacy inspection are units.
+    vi.spyOn(Element.prototype, "hasAttribute").mockImplementation(function (
+      this: Element,
+      name,
+    ) {
+      if (callbackActive && name === "data-interactions-exclude") work++;
+      return hasAttribute.call(this, name);
+    });
+    vi.spyOn(Node.prototype, "parentNode", "get").mockImplementation(function (
+      this: Node,
+    ) {
+      if (callbackActive && this instanceof Document) work++;
+      return parentNode.call(this);
+    });
+    vi.spyOn(Node.prototype, "firstChild", "get").mockImplementation(function (
+      this: Node,
+    ) {
+      if (callbackActive && this instanceof Text) work++;
+      return firstChild.call(this);
+    });
+    vi.stubGlobal(
+      "MutationObserver",
+      class extends NativeObserver {
+        constructor(callback: MutationCallback) {
+          super((records, observer) => {
+            callbacks++;
+            callbackActive = true;
+            try {
+              callback(
+                records.map(
+                  (record) =>
+                    new Proxy(record, {
+                      get(target, property) {
+                        if (property === "target") work++;
+                        return Reflect.get(target, property, target);
+                      },
+                    }),
+                ),
+                observer,
+              );
+            } finally {
+              callbackActive = false;
+            }
+          });
+        }
+      },
+    );
+    try {
+      const handle = initInteractions({
+        ...options,
+        maxMutationRecords: limit,
+      });
+      handles.push(handle);
+      for (const group of roots) document.body.append(...group);
+      await Promise.resolve();
+      expect(callbacks).toBe(1);
+      expect(work).toBeGreaterThan(0);
+      expect(work).toBeLessThanOrEqual(limit);
+      expect(handle.getDiagnostics().droppedEvents).toBeGreaterThan(0);
+      await handle.flush();
+      expect(
+        events().filter(
+          (event) => event.data.feedback_type === "progress_indicator",
+        ).length,
+      ).toBeLessThanOrEqual(limit);
+      expect(JSON.stringify(batches())).not.toMatch(
+        /private.indicator|private text/,
+      );
+      if (shape === "excluded siblings" || shape === "text siblings") {
+        expect(
+          events().some(
+            (event) => event.data.feedback_type === "progress_indicator",
+          ),
+        ).toBe(false);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
-  const handle = initInteractions({ ...options, maxMutationRecords: 3 });
-  handles.push(handle);
-  const tree = document.createElement("section");
-  tree.innerHTML = "<progress></progress>".repeat(5000);
-  document.body.append(tree);
-  await Promise.resolve();
+});
+
+it("uses bounded tag ancestry without scanning a large sibling collection", async () => {
+  document.body.innerHTML = "<button></button>".repeat(5000);
+  const target = document.body.lastElementChild as HTMLButtonElement;
+  const siblings = vi.spyOn(document.body, "children", "get");
+  const handle = init();
+  target.click();
   await handle.flush();
-  expect(traversals.length).toBe(1);
-  expect(traversals[0].mock.calls.length).toBeLessThanOrEqual(3);
-  expect(
-    events().filter(
-      (event) => event.data.feedback_type === "progress_indicator",
-    ).length,
-  ).toBeLessThanOrEqual(3);
+  expect(siblings).not.toHaveBeenCalled();
+  const action = events().find((event) => event.type === "interaction.started");
+  expect(action.data.control_id).toBe("body/button");
+  expect(action.data.control_id.split("/").length).toBeLessThanOrEqual(5);
 });

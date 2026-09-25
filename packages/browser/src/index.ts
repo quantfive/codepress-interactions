@@ -320,16 +320,14 @@ class Runtime {
         const explicit =
           safeIdentifier(target.getAttribute("data-interaction-id")) ??
           safeIdentifier(target.getAttribute("data-testid"));
-        // Structural fallback contains tag/sibling position only, never text/IDs/classes.
+        // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
         const path: string[] = [];
         for (
           let node: Element | null = target;
           node && node !== this.root && path.length < 5;
           node = node.parentElement
         )
-          path.unshift(
-            `${node.tagName.toLowerCase()}:${node.parentElement ? Array.from(node.parentElement.children).indexOf(node) : 0}`,
-          );
+          path.unshift(node.tagName.toLowerCase());
         this.record("interaction.started", crypto.randomUUID(), {
           action: event.type,
           control_id: explicit ?? path.join("/"),
@@ -352,95 +350,124 @@ class Runtime {
       1000,
     );
     this.observer = new MutationObserver((records) => {
+      let remaining = observerLimit;
+      let truncated = false;
       let count = 0;
-      for (const record of records.slice(0, observerLimit)) {
-        const target =
-          record.target instanceof Element
-            ? record.target
-            : record.target.parentElement;
-        if (target && !target.closest("[data-interactions-exclude]")) {
-          count++;
-          if (record.type === "attributes") {
-            const name = record.attributeName;
-            if (name === "aria-busy" || name === "disabled") {
+      const take = () => {
+        if (remaining > 0) {
+          remaining--;
+          return true;
+        }
+        truncated = true;
+        return false;
+      };
+      // Ancestor privacy checks also consume the callback budget. An exhausted
+      // check cannot establish that a node is public, so it emits no evidence.
+      const publicPath = (node: Node): boolean => {
+        for (
+          let ancestor: Node | null = node;
+          ancestor;
+          ancestor = ancestor.parentNode
+        ) {
+          if (!take()) return false;
+          if (
+            ancestor instanceof Element &&
+            ancestor.hasAttribute("data-interactions-exclude")
+          )
+            return false;
+        }
+        return true;
+      };
+      const indicators = (node: Node, phase: "appeared" | "removed") => {
+        if (!publicPath(node)) return;
+        const pending = [node];
+        let first = true;
+        while (pending.length) {
+          const candidate = pending.pop()!;
+          const root = first;
+          first = false;
+          // publicPath already inspected the root. Every subsequent node,
+          // including excluded and non-element nodes, needs its own unit.
+          if (!root && !take()) return;
+          if (!root && candidate.nextSibling)
+            pending.push(candidate.nextSibling);
+          if (candidate instanceof Element) {
+            if (!root && candidate.hasAttribute("data-interactions-exclude"))
+              continue;
+            if (
+              candidate.matches(
+                'progress,[role="progressbar"],[role="status"],[aria-busy="true"]',
+              )
+            ) {
               this.record("ui.state.changed", null, {
-                feedback_type: name === "aria-busy" ? "busy" : "disabled",
-                phase: (
-                  name === "aria-busy"
-                    ? target.getAttribute(name) === "true"
-                    : target.hasAttribute(name)
+                feedback_type: candidate.matches(
+                  'progress,[role="progressbar"]',
                 )
-                  ? "active"
-                  : "inactive",
+                  ? "progress_indicator"
+                  : candidate.matches('[aria-busy="true"]')
+                    ? "busy"
+                    : "status_region",
+                phase,
                 control_id:
-                  safeIdentifier(target.getAttribute("data-interaction-id")) ??
-                  safeIdentifier(target.getAttribute("data-testid")),
+                  safeIdentifier(
+                    candidate.getAttribute("data-interaction-id"),
+                  ) ?? safeIdentifier(candidate.getAttribute("data-testid")),
               });
             }
           }
-          for (const [nodes, phase] of [
-            [record.addedNodes, "appeared"],
-            [record.removedNodes, "removed"],
-          ] as const) {
-            let inspected = 0;
-            for (const node of nodes) {
-              if (++inspected > observerLimit) break;
-              if (
-                !(node instanceof Element) ||
-                node.closest("[data-interactions-exclude]")
+          // Only save a sibling and descend one edge at a time. Filtered walkers
+          // may scan arbitrarily many rejected nodes inside a single nextNode().
+          if (candidate.firstChild) pending.push(candidate.firstChild);
+        }
+      };
+      for (const record of records) {
+        if (!take()) break;
+        const node = record.target;
+        if (!publicPath(node)) {
+          if (truncated) break;
+          continue;
+        }
+        const target = node instanceof Element ? node : node.parentElement;
+        if (!target) continue;
+        count++;
+        if (record.type === "attributes") {
+          const name = record.attributeName;
+          if (name === "aria-busy" || name === "disabled") {
+            this.record("ui.state.changed", null, {
+              feedback_type: name === "aria-busy" ? "busy" : "disabled",
+              phase: (
+                name === "aria-busy"
+                  ? target.getAttribute(name) === "true"
+                  : target.hasAttribute(name)
               )
-                continue;
-              const selector =
-                'progress,[role="progressbar"],[role="status"],[aria-busy="true"]';
-              const indicators: Element[] = [];
-              const walker = document.createTreeWalker(
-                node,
-                NodeFilter.SHOW_ELEMENT,
-                {
-                  acceptNode: (candidate) =>
-                    (candidate as Element).hasAttribute(
-                      "data-interactions-exclude",
-                    )
-                      ? NodeFilter.FILTER_REJECT
-                      : NodeFilter.FILTER_ACCEPT,
-                },
-              );
-              let candidate: Element | null = node;
-              for (
-                let visited = 0;
-                candidate && visited < observerLimit;
-                visited++
-              ) {
-                if (candidate.matches(selector)) indicators.push(candidate);
-                candidate = walker.nextNode() as Element | null;
-              }
-              for (const indicator of indicators) {
-                if (indicator.closest("[data-interactions-exclude]")) continue;
-                this.record("ui.state.changed", null, {
-                  feedback_type: indicator.matches(
-                    'progress,[role="progressbar"]',
-                  )
-                    ? "progress_indicator"
-                    : indicator.matches('[aria-busy="true"]')
-                      ? "busy"
-                      : "status_region",
-                  phase,
-                  control_id:
-                    safeIdentifier(
-                      indicator.getAttribute("data-interaction-id"),
-                    ) ?? safeIdentifier(indicator.getAttribute("data-testid")),
-                });
-              }
-            }
+                ? "active"
+                : "inactive",
+              control_id:
+                safeIdentifier(target.getAttribute("data-interaction-id")) ??
+                safeIdentifier(target.getAttribute("data-testid")),
+            });
           }
         }
+        for (const [nodes, phase] of [
+          [record.addedNodes, "appeared"],
+          [record.removedNodes, "removed"],
+        ] as const) {
+          for (const node of nodes) {
+            indicators(node, phase);
+            if (truncated) break;
+          }
+          if (truncated) break;
+        }
+        if (truncated) break;
       }
       if (count)
         this.record("ui.state.changed", null, {
           feedback_type: "structural_change",
           count,
         });
-      this.dropped += Math.max(0, records.length - observerLimit);
+      // At least one observation was omitted. Counting the rest would itself
+      // exceed the work bound, so this is a lower bound, not a skipped-node total.
+      if (truncated) this.dropped++;
     });
     this.observer.observe(this.root, {
       subtree: true,

@@ -30,3 +30,20 @@ no actual third-party request leaves the browser. `QA_BROWSER_MODULE` may select
 a separately built mutant module for regression validation. Expando properties and
 stateful string conversions exercise target resolution for both fetch and XHR:
 the target checked for header propagation must be the actual target sent.
+
+## Mutation observer work bound
+
+The browser unit suite delivers real mutation bursts: a large subtree, many
+records with many subtrees, and thousands of excluded or text siblings. It counts record
+lookups and inspected nodes during the SDK callback and requires the total to
+remain within `maxMutationRecords`. The option is one shared callback work budget
+(default 50, capped at 1,000), including ancestor privacy checks, excluded nodes,
+and non-element nodes. Traversal is incremental and skips excluded descendants.
+A truncated callback increments dropped diagnostics once; it does not estimate
+the unknown number of unvisited nodes or potential events. Existing progress,
+busy, removal, and privacy tests remain required. Run with `pnpm test`.
+
+The click fallback test mounts 5,000 sibling buttons and verifies that an
+unannotated control emits only an at-most-five-tag ancestry hint without reading
+the sibling collection. Explicit safe control/test identifiers still take precedence.
+The fallback is a non-unique structural hint, not a stable control identity.
