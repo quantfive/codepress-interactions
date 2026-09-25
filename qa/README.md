@@ -27,4 +27,6 @@ The browser fixture creates URL and Request objects in a same-origin iframe. It
 asserts that native Request headers survive and a cross-realm URL to an unconfigured
 origin receives no correlation header. Playwright intercepts that external host;
 no actual third-party request leaves the browser. `QA_BROWSER_MODULE` may select
-a separately built mutant module for regression validation.
+a separately built mutant module for regression validation. Expando properties and
+stateful string conversions exercise target resolution for both fetch and XHR:
+the target checked for header propagation must be the actual target sent.

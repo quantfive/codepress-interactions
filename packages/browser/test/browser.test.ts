@@ -111,7 +111,7 @@ describe("causal request attribution", () => {
     await work;
     const headers = (url: string) =>
       new Headers(
-        sent.find((call) => String(call.input) === url)!.init?.headers,
+        sent.find((call) => String(call.input) === new URL(url, document.baseURI).href)!.init?.headers,
       );
     expect(headers("/api/sync").get("X-Interaction-Id")).toBe(actionId);
     expect(headers("/api/sync").get("X-Trace-Id")).toBe("existing-trace");

@@ -74,6 +74,20 @@ document.querySelector('button').onclick=async()=>{
     const request=new frame.contentWindow.Request(window.location.origin+'/work', {headers:{'X-Host-Header':'preserve-me'}});
     window.result=await (await fetch(request)).json();
     await fetch(new frame.contentWindow.URL('https://unconfigured.example.test/probe'));
+    const decorated=new frame.contentWindow.URL('https://unconfigured.example.test/expando');
+    decorated.url=window.location.origin+'/work';
+    await fetch(decorated);
+    let conversions=0;
+    const changing={toString:()=> ++conversions===1 ? window.location.origin+'/work' : 'https://unconfigured.example.test/changed'};
+    await fetch(changing);
+    window.conversions=conversions;
+    await window.sdk.runAction('xhr.probe',()=>new Promise((resolve,reject)=>{
+      let conversions=0;
+      const changing={toString:()=> ++conversions===1 ? 'https://unconfigured.example.test/xhr' : window.location.origin+'/work'};
+      const xhr=new XMLHttpRequest();
+      xhr.onload=()=>{window.xhrConversions=conversions;resolve()}; xhr.onerror=reject;
+      xhr.open('GET',changing); xhr.send();
+    }));
     frame.remove();
   });
   progress.remove(); button.disabled=false; button.setAttribute('aria-busy','false');
@@ -154,10 +168,12 @@ try:
             assert page.evaluate("window.result.host_header") == "preserve-me", (
                 "SDK dropped cross-realm Request headers"
             )
-            assert external_headers, "Cross-realm URL was not fetched"
             assert all("x-interaction-id" not in h for h in external_headers), (
                 "SDK leaked correlation to unconfigured origin"
             )
+            assert len(external_headers) == 3, "Expected all external URL probes"
+            assert page.evaluate("window.conversions") == 1, "Request target resolved twice"
+            assert page.evaluate("window.xhrConversions") == 1, "XHR target resolved twice"
             page.evaluate("window.sdk.flush()")
             assert flush(timeout=5), "Python SDK did not drain within its deadline"
             evidence = timeline(identifier)
@@ -188,6 +204,7 @@ try:
                             "service timeline correlation",
                             "cross-realm Request headers",
                             "cross-realm URL origin restriction",
+                            "URL expando and single target resolution",
                         ],
                     }
                 )

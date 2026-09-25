@@ -177,6 +177,12 @@ class Runtime {
   private sourceId = crypto.randomUUID();
   private context: string | null = null;
   private originalFetch = window.fetch;
+  private requestTarget = Object.getOwnPropertyDescriptor(
+    Request.prototype, "url",
+  )!.get!;
+  private requestHeaders = Object.getOwnPropertyDescriptor(
+    Request.prototype, "headers",
+  )!.get!;
   private wrappedFetch?: typeof fetch;
   private observer?: MutationObserver;
   private timer?: ReturnType<typeof setInterval>;
@@ -478,16 +484,9 @@ class Runtime {
       numberOption(this.options.flushIntervalMs, 5000, 3600000),
     );
   }
-  private requestUrl(input: RequestInfo | URL): URL | null {
+  private requestUrl(input: string): URL | null {
     try {
-      const url = new URL(
-        typeof input === "string"
-          ? input
-          : "url" in input
-            ? input.url
-            : String(input),
-        location.href,
-      );
+      const url = new URL(input, document.baseURI);
       const signed = Array.from(url.searchParams.keys()).some((key) =>
         /^(x-amz-|x-goog-|signature$|token$|sig$)/i.test(key),
       );
@@ -505,16 +504,28 @@ class Runtime {
     init: RequestInit | undefined,
     id: string | null,
   ): Promise<Response> {
-    if (!this.active || !this.requestUrl(input))
+    if (!this.active) return this.originalFetch.call(window, input, init);
+    // Brand-check via native Request slots, which work across realms and ignore
+    // expando properties. Resolve other inputs once and send the same URL we
+    // checked: inspecting one representation and sending another leaks headers.
+    let target: string;
+    let inheritedHeaders: Headers | undefined;
+    try {
+      target = this.requestTarget.call(input) as string;
+      inheritedHeaders = this.requestHeaders.call(input) as Headers;
+    } catch {
+      try {
+        target = new URL(String(input), document.baseURI).href;
+        input = target;
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+    if (!this.requestUrl(target))
       return this.originalFetch.call(window, input, init);
     let modified = init;
     try {
-      const headers = new Headers(
-        init?.headers ??
-          (typeof input === "object" && "headers" in input
-            ? input.headers
-            : undefined),
-      );
+      const headers = new Headers(init?.headers ?? inheritedHeaders);
       if (headers.has("X-Interaction-Id"))
         id = validInteractionId(headers.get("X-Interaction-Id"));
       else if (id) headers.set("X-Interaction-Id", id);
@@ -569,8 +580,15 @@ class Runtime {
       this: XMLHttpRequest,
       ...args: Parameters<XMLHttpRequest["open"]>
     ) {
+      let target = String(args[1]);
+      try {
+        target = new URL(target, document.baseURI).href;
+      } catch {
+        // Let native open report invalid URLs with its own exception behavior.
+      }
+      args[1] = target;
       const result = originalOpen.apply(this, args);
-      requests.set(this, { url: String(args[1]), interactionHeader: null });
+      requests.set(this, { url: target, interactionHeader: null });
       return result;
     } as XMLHttpRequest["open"];
     const header = function (
