@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "setup_commands": [
+    [
+      "pnpm",
+      "install",
+      "--frozen-lockfile"
+    ],
+    [
+      "uv",
+      "sync",
+      "--project",
+      "python",
+      "--frozen"
+    ]
+  ],
+  "services": [],
+  "checks": [
+    {
+      "id": "browser-tests",
+      "executor": "native",
+      "working_dir": ".",
+      "command": [
+        "pnpm",
+        "test"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    },
+    {
+      "id": "typescript",
+      "executor": "native",
+      "working_dir": ".",
+      "command": [
+        "pnpm",
+        "typecheck"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    },
+    {
+      "id": "javascript-packages",
+      "executor": "native",
+      "working_dir": ".",
+      "command": [
+        "pnpm",
+        "build"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    },
+    {
+      "id": "python-tests",
+      "executor": "native",
+      "working_dir": "python",
+      "command": [
+        "uv",
+        "run",
+        "pytest",
+        "-q"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    },
+    {
+      "id": "python-lint",
+      "executor": "native",
+      "working_dir": "python",
+      "command": [
+        "uv",
+        "run",
+        "ruff",
+        "check",
+        "src",
+        "tests"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    },
+    {
+      "id": "python-packages",
+      "executor": "native",
+      "working_dir": "python",
+      "command": [
+        "uv",
+        "build"
+      ],
+      "timeout_seconds": 300,
+      "expected_exit_codes": [
+        0
+      ],
+      "env_defaults": {},
+      "required_bindings": []
+    }
+  ]
+}

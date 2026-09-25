@@ -483,9 +483,9 @@ class Runtime {
       const url = new URL(
         typeof input === "string"
           ? input
-          : input instanceof URL
-            ? input.href
-            : input.url,
+          : "url" in input
+            ? input.url
+            : String(input),
         location.href,
       );
       const signed = Array.from(url.searchParams.keys()).some((key) =>
@@ -511,7 +511,7 @@ class Runtime {
     try {
       const headers = new Headers(
         init?.headers ??
-          (typeof Request !== "undefined" && input instanceof Request
+          (typeof input === "object" && "headers" in input
             ? input.headers
             : undefined),
       );

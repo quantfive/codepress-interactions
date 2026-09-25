@@ -8,5 +8,6 @@ __pycache__/
 *.egg-info/
 .env
 # Local delivery-tool setup; SDK consumers do not need CodePress Factory.
-.codepress/
+.codepress/*
+!.codepress/verify-local/
 .codex/
