@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codepress-interactions"
+version = "0.1.0"
+description = "Privacy bounded interaction telemetry for Python, Django and Celery"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+readme = "README.md"
+dependencies = []
+
+[project.optional-dependencies]
+django = ["Django>=4.2"]
+celery = ["celery>=5.3"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "django>=4.2", "celery>=5.3", "ruff>=0.9", "jsonschema>=4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100

@@ -1,0 +1,32 @@
+{
+  "batch_id": "6d30dd63-e54d-4703-9090-d0299760c70a",
+  "schema_version": 1,
+  "events": [
+    {
+      "event_id": "c0aa9d69-e29e-42ba-931d-7cc86e4030c7",
+      "schema_version": 1,
+      "interaction_id": "b3e2e123-b13a-4258-8738-b476df573ca9",
+      "operation_id": null,
+      "source": "browser",
+      "source_instance_id": "test",
+      "sequence": 1,
+      "occurred_at": "2026-09-25T10:00:00Z",
+      "elapsed_ms": null,
+      "type": "interaction.started",
+      "attribution": "explicit",
+      "data": {
+        "control_id": null,
+        "surface": null,
+        "action": "example.confirm",
+        "route_template": null,
+        "feedback_type": null,
+        "trace_id": null,
+        "phase": null,
+        "outcome": null,
+        "duration_ms": null,
+        "count": null,
+        "sdk_version": null
+      }
+    }
+  ]
+}
